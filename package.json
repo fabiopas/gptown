@@ -1,0 +1,26 @@
+{
+  "name": "local-llm-web-cursor-api",
+  "version": "1.0.0",
+  "description": "Local LLM web UI with Cursor-compatible OpenAI API",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "api": "node server.js",
+    "dev:web": "vite",
+    "build:web": "vite build --outDir client/dist",
+    "preview:web": "vite preview",
+    "dev": "concurrently \"npm run api\" \"npm run dev:web\""
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "better-sqlite3": "^12.9.0",
+    "concurrently": "^9.2.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2",
+    "highlight.js": "^11.11.1",
+    "marked": "^18.0.2",
+    "vite": "^7.1.9"
+  }
+}
