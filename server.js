@@ -12,7 +12,7 @@ const db = require("./db");
 const app = express();
 const PORT = process.env.PORT || 3000;
 const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || "http://127.0.0.1:11434";
-const DEFAULT_MODEL = process.env.OLLAMA_MODEL || "llama3.1";
+const DEFAULT_MODEL = process.env.OLLAMA_MODEL || "gemma4:e4b";
 const API_KEY = process.env.API_KEY || "local-dev-key";
 const UI_USER = (process.env.UI_USER || "admin").trim();
 const UI_PASSWORD = (process.env.UI_PASSWORD || "changeme").trim();
@@ -202,9 +202,10 @@ app.post("/api/chat", requireSession, async (req, res) => {
               try {
                 const chunk = JSON.parse(line);
                 const token = chunk.message?.content || "";
-                if (token) {
-                  fullReply += token;
-                  res.write(`data: ${JSON.stringify({ token })}\n\n`);
+                const thinking = chunk.message?.thinking || "";
+                if (token || thinking) {
+                  if (token) fullReply += token;
+                  res.write(`data: ${JSON.stringify({ token, thinking })}\n\n`);
                 }
                 if (chunk.done === true) {
                   res.write("data: [DONE]\n\n");

@@ -250,25 +250,63 @@ async function switchConversation(id) {
 }
 
 /* ── Empty state ─────────────────────────────────────────── */
+function getTimeGreeting() {
+  const hour = new Date().getHours();
+  if (hour < 12) return "Good morning";
+  if (hour < 18) return "Good afternoon";
+  return "Good evening";
+}
+
+function getSuggestionPool() {
+  return [
+    "Break down this architecture in plain English",
+    "Draft a clean PR description from my git diff",
+    "Write tests for this function edge-case by edge-case",
+    "Turn this rough idea into a product spec",
+    "Find likely bugs in this snippet and explain why",
+    "Generate SQL to answer this analytics question",
+    "Refactor this code for readability first, performance second",
+    "Create a launch checklist for this feature",
+  ];
+}
+
 function showEmptyState() {
   if (chatEl.querySelector(".empty-state")) return;
+  const greeting = `${getTimeGreeting()}${currentUser?.username ? `, ${currentUser.username}` : ""}`;
+  const intro = "Pick a direction and I will help you move fast.";
+  const suggestions = getSuggestionPool().sort(() => Math.random() - 0.5).slice(0, 4);
+
   const es = document.createElement("div");
   es.className = "empty-state";
   es.innerHTML = `
     <div class="empty-logo"><span class="logo-mark logo-mark-lg">G</span></div>
-    <h2 class="empty-title">What can I help with?</h2>
+    <h2 class="empty-title">${greeting}</h2>
+    <p class="empty-subtitle">${intro}</p>
     <div class="suggestions">
-      <button class="suggestion-btn">Explain a concept simply</button>
-      <button class="suggestion-btn">Write a Python script</button>
-      <button class="suggestion-btn">Debug my code</button>
-      <button class="suggestion-btn">Help me brainstorm ideas</button>
+      ${suggestions.map((text) => `<button class="suggestion-btn">${text}</button>`).join("")}
     </div>
   `;
   chatEl.appendChild(es);
 }
 
 /* ── Message DOM ─────────────────────────────────────────── */
-function appendMessage(role, content) {
+function createThinkingBlock(thinking = "") {
+  const panel = document.createElement("details");
+  panel.className = "thinking-panel";
+
+  const summary = document.createElement("summary");
+  summary.className = "thinking-summary";
+  summary.innerHTML = `<span>Thinking</span><span class="thinking-caret">▾</span>`;
+
+  const body = document.createElement("div");
+  body.className = "thinking-content";
+  body.textContent = thinking;
+
+  panel.append(summary, body);
+  return { panel, body };
+}
+
+function appendMessage(role, content, options = {}) {
   chatEl.querySelector(".empty-state")?.remove();
 
   const row = document.createElement("div");
@@ -284,8 +322,14 @@ function appendMessage(role, content) {
   const bubble = document.createElement("div");
   bubble.className = "bubble";
   bubble.dataset.rawContent = content;
+  let thinkingBody = null;
 
   if (role === "assistant") {
+    if (options.thinking?.trim()) {
+      const { panel, body } = createThinkingBlock(options.thinking.trim());
+      wrap.appendChild(panel);
+      thinkingBody = body;
+    }
     bubble.innerHTML = renderMarkdown(content);
   } else {
     bubble.textContent = content;
@@ -300,7 +344,7 @@ function appendMessage(role, content) {
   chatEl.appendChild(row);
   chatEl.scrollTop = chatEl.scrollHeight;
 
-  return bubble;
+  return { bubble, thinkingBody };
 }
 
 function addStreamingRow() {
@@ -317,19 +361,27 @@ function addStreamingRow() {
   const wrap = document.createElement("div");
   wrap.className = "bubble-wrap";
 
+  const { panel: thinkingPanel, body: thinkingBody } = createThinkingBlock("");
+  thinkingPanel.classList.add("streaming");
+  thinkingBody.innerHTML = `
+    <div class="thinking-loader">
+      <span></span><span></span><span></span>
+    </div>
+  `;
+
   const bubble = document.createElement("div");
   bubble.className = "bubble";
   bubble.innerHTML = `<div class="typing-bubble"><span></span><span></span><span></span></div>`;
 
-  wrap.appendChild(bubble);
+  wrap.append(thinkingPanel, bubble);
   row.append(avatar, wrap);
   chatEl.appendChild(row);
   chatEl.scrollTop = chatEl.scrollHeight;
 
-  return { row, bubble, wrap };
+  return { row, bubble, wrap, thinkingPanel, thinkingBody };
 }
 
-function finalizeStreamingRow({ row, bubble, wrap }, content) {
+function finalizeStreamingRow({ row, bubble, wrap, thinkingPanel, thinkingBody }, content, thinking) {
   row.removeAttribute("id");
   bubble.dataset.rawContent = content;
   bubble.style.whiteSpace = "";
@@ -338,6 +390,14 @@ function finalizeStreamingRow({ row, bubble, wrap }, content) {
   } else {
     bubble.innerHTML = "";
   }
+
+  if (thinking?.trim()) {
+    thinkingBody.textContent = thinking.trim();
+    thinkingPanel.classList.remove("streaming");
+  } else {
+    thinkingPanel.remove();
+  }
+
   if (!wrap.querySelector(".msg-actions")) {
     const actions = document.createElement("div");
     actions.className = "msg-actions";
@@ -411,7 +471,8 @@ newChatTopbarBtn.addEventListener("click", startNewChat);
 let abortController = null;
 
 function setLoading(on) {
-  sendBtn.hidden = on;
+  sendBtn.disabled = on;
+  sendBtn.classList.toggle("is-loading", on);
   stopBtn.hidden = !on;
   inputEl.disabled = on;
   if (on) setStatus("Generating…", "loading");
@@ -447,6 +508,9 @@ formEl.addEventListener("submit", async (e) => {
   currentConvIsEmpty = false;
 
   appendMessage("user", message);
+  sendBtn.classList.remove("send-pop");
+  void sendBtn.offsetWidth;
+  sendBtn.classList.add("send-pop");
 
   if (isFirst) {
     const title = message.length > 46 ? message.slice(0, 46) + "…" : message;
@@ -462,6 +526,7 @@ formEl.addEventListener("submit", async (e) => {
 
   const streamEl = addStreamingRow();
   let fullReply = "";
+  let fullThinking = "";
   abortController = new AbortController();
 
   try {
@@ -495,27 +560,32 @@ formEl.addEventListener("submit", async (e) => {
         const data = line.slice(6).trim();
         if (data === "[DONE]") continue;
         try {
-          const { token } = JSON.parse(data);
+          const { token, thinking } = JSON.parse(data);
           if (token) {
             fullReply += token;
             streamEl.bubble.textContent = fullReply;
             streamEl.bubble.style.whiteSpace = "pre-wrap";
             chatEl.scrollTop = chatEl.scrollHeight;
           }
+          if (thinking) {
+            fullThinking += thinking;
+            streamEl.thinkingBody.textContent = fullThinking;
+            chatEl.scrollTop = chatEl.scrollHeight;
+          }
         } catch { /* skip */ }
       }
     }
 
-    finalizeStreamingRow(streamEl, fullReply);
+    finalizeStreamingRow(streamEl, fullReply, fullThinking);
   } catch (err) {
     if (err.name === "AbortError") {
       if (fullReply) {
-        finalizeStreamingRow(streamEl, fullReply);
+        finalizeStreamingRow(streamEl, fullReply, fullThinking);
       } else {
         streamEl.row.remove();
       }
     } else {
-      finalizeStreamingRow(streamEl, `Error: ${err.message}`);
+      finalizeStreamingRow(streamEl, `Error: ${err.message}`, fullThinking);
     }
   } finally {
     setLoading(false);
