@@ -39,6 +39,32 @@ npm start
 
 Dann laeuft alles zusammen ueber `http://localhost:3000`.
 
+## 3.1) Docker Compose
+
+Du kannst die App auch komplett in Docker starten:
+
+```bash
+cp .env.example .env
+docker compose up --build -d
+```
+
+Danach:
+
+- App + API: `http://localhost:3000`
+- Healthcheck: `http://localhost:3000/health`
+
+Stoppen:
+
+```bash
+docker compose down
+```
+
+Wichtig:
+
+- Standardmaessig spricht der Container mit lokalem Ollama ueber `http://host.docker.internal:11434`.
+- Auf Linux ggf. `OLLAMA_BASE_URL` in `.env` auf die passende Host-IP setzen.
+- Die SQLite-Datei wird persistent in Docker-Volume `gptown_data` gespeichert.
+
 ## 4) Cursor mit lokaler API verbinden
 
 In Cursor (OpenAI-kompatibler Provider):
