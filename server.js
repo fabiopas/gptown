@@ -446,47 +446,62 @@ async function handleObsidianRequest(req, res) {
 
     const modeInstructionByType = {
       selection:
-        "Task type: selection edit. Return only the edited replacement text for the selected fragment. No explanations, no markdown fences.",
+        "Task: selection edit. Return ONLY the edited replacement text for the selected fragment. No conversational filler, no markdown fences.",
       note_replace:
-        "Task type: full note rewrite. Return only the final full note content. No explanations, no markdown fences.",
+        "Task: full note rewrite. Return ONLY the final full note content. No explanations, no markdown fences.",
       beautify:
-        "Task type: beautify full note. Improve style, clarity, structure, and readability. Return only the final full note content.",
+        "Task: beautify. Improve style, clarity, and structure. Return ONLY the improved content. No explanations, no markdown fences.",
       summarize:
-        "Task type: summarize full note. Return a concise structured summary in markdown.",
+        "Task: summarize. Return a concise structured summary in markdown.",
       fix:
-        "Task type: correction. Fix grammar, spelling, and clarity while preserving meaning. Return only corrected content.",
+        "Task: correction. Fix grammar, spelling, and clarity. Return ONLY the corrected content. No explanations, no markdown fences.",
       tikz_figure:
-        ```Task type: tikz figure. Generate a TikZ figure based on the user prompt and note context. Return only valid LaTeX TikZ snippet ready to paste at cursor position. No explanations and no markdown code fences.
+        "Task: tikz figure. Generate a TikZ figure based on prompt and context.
         
         Good example:
         \`\`\`tikz
-    \begin{document}
-    \begin{tikzpicture}[xscale=1.5, yscale=6]
-          % Draw the Axes
-          \draw[->, thick] (-3.5,0) -- (3.5,0) node[right] {$x$};
-          \draw[->, thick] (0,-0.2) -- (0,1.3) node[above] {$F(x)$};
+\begin{document}
+\begin{tikzpicture}[scale=1.5]
+    % 1. Verbindungslinien (Trichter) - Zuerst zeichnen, damit sie im Hintergrund sind
+    % Verbindet den Input-Patch direkt mit der Output-Zelle
+    \draw[dashed, blue, thick] (2,4) -- (11,3);
+    \draw[dashed, blue, thick] (2,2) -- (11,2);
 
-          % Draw the Asymptotes (0 and 1)
-          \draw[dashed, gray] (-3.5,1) -- (3.5,1);
-          
-          % Labels on the Y-axis
-          \node[left] at (0,1) {$1$};
-          \node[below right] at (0,0) {$0$};
+    % 2. Input Matrix (4x4 Bild)
+    \draw[fill=blue!50] (2,2) rectangle (4,4); % Blaue Füllung für 2x2 Patch
+    \draw[step=1cm, black, thin] (0,0) grid (4,4); % Gitter darüberlegen
+    \draw[blue, very thick] (2,2) rectangle (4,4); % Blaue Umrandung für Patch
+    
+    % Datenwerte für Input (gleiche Werte wie oben)
+    \node at (0.5, 3.5) {3}; \node at (1.5, 3.5) {7}; \node at (2.5, 3.5) {2}; \node at (3.5, 3.5) {5};
+    \node at (0.5, 2.5) {1}; \node at (1.5, 2.5) {8}; \node at (2.5, 2.5) {4}; \node at (3.5, 2.5) {6};
+    \node at (0.5, 1.5) {9}; \node at (1.5, 1.5) {2}; \node at (2.5, 1.5) {10}; \node at (3.5, 1.5) {1};
+    \node at (0.5, 0.5) {0}; \node at (1.5, 0.5) {5}; \node at (2.5, 0.5) {3}; \node at (3.5, 0.5) {7};
+    
+    \node[anchor=south] at (2, 4.2) {\textbf{Input (Image)}};
 
-          % Draw the CDF Curve (using a logistic curve to approximate an S-shape CDF)
+    % 3. Operations-Label in der Mitte (anstelle des Kernels)
+    \node at (7.5, 1.5) {\textbf{Average Pooling}};
+    \node at (7.5, 1.2) {\small \textbf{Avg(2, 5, 4, 6)}};
 
-          % Annotations
-          \node[red, right] at (0.5, 0.4) {Accumulating Probability};
-          \draw[->, red, shorten >=2pt, thick] (0.5, 0.45) -- (1.5, 0.85);
-
-          \node[darkgray] at (-2, 0.15) {Starts at 0};
-          \node[darkgray] at (2, 1.15) {Caps at 1};
-
-      \end{tikzpicture}
-      \end{document}
-    \`\`\`
-    ```,
+    % 4. Output Matrix (2x2 Pooled Map)
+    \draw[fill=red!50] (11,2) rectangle (12,3);
+    \draw[step=1cm, gray, thin] (10,1) grid (12,3);
+    \draw[red, very thick] (11,2) rectangle (12,3);
+    
+    % Datenwerte für Output (Ergebnisse des Average Pooling)
+    \node at (11.5, 2.5) {\large 4.75}; \node at (10.5, 2.5) {4.25};
+    \node at (11.5, 1.5) {4}; \node at (10.5, 1.5) {5.25};
+    
+    \node[anchor=south] at (11, 3.2) {\textbf{Pooled Map}};
+    \node at (11.5, 2.5) {\large \textbf{4.75}}; % Hervorheben des Ergebnisses
+\end{tikzpicture}
+\end{document}
+\`\`\`
+        "
     };
+
+
     const modeInstruction =
       modeInstructionByType[effectiveMode] || modeInstructionByType.note_replace;
 
