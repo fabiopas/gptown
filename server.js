@@ -484,26 +484,42 @@ app.post("/v1/chat/completions", authIfNeeded, async (req, res) => {
 
               if (chunk.done === true) {
                 if (collectedToolCalls.length > 0) {
-                  // Convert Ollama tool_calls → OpenAI format and send in one delta
-                  const toolCalls = collectedToolCalls.map((tc, idx) => ({
-                    index: idx,
-                    id: `call_${completionId}_${idx}`,
-                    type: "function",
-                    function: {
-                      name: tc.function?.name || "",
-                      arguments:
-                        typeof tc.function?.arguments === "object"
-                          ? JSON.stringify(tc.function.arguments)
-                          : (tc.function?.arguments || "{}"),
-                    },
-                  }));
-                  writeChunk({ tool_calls: toolCalls });
+                  // Cursor/OpenAI-Clients erwarten zwingend, dass Tool-Calls in Initialisierung
+                  // und Argumente gesplittet werden, sonst stürzt der interne Parser ab.
+                  collectedToolCalls.forEach((tc, idx) => {
+                    
+                    // 1. Chunk: Initialisierung (ID, Typ, Name - KEINE Argumente)
+                    writeChunk({
+                      tool_calls: [{
+                        index: idx,
+                        id: `call_${completionId}_${idx}`,
+                        type: "function",
+                        function: {
+                          name: tc.function?.name || "",
+                          arguments: ""
+                        }
+                      }]
+                    });
+              
+                    // 2. Chunk: Argumente nachliefern
+                    const argsStr = typeof tc.function?.arguments === "object"
+                      ? JSON.stringify(tc.function.arguments)
+                      : (tc.function?.arguments || "{}");
+              
+                    writeChunk({
+                      tool_calls: [{
+                        index: idx,
+                        function: {
+                          arguments: argsStr
+                        }
+                      }]
+                    });
+                  });
+                  
                   writeChunk({}, "tool_calls");
                 } else {
                   writeChunk({}, "stop");
                 }
-              } else if (token) {
-                writeChunk({ content: token });
               }
             } catch { /* skip malformed lines */ }
           }
