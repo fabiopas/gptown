@@ -43,7 +43,7 @@ function logRouteError(route, error) {
 const sessions = new Map();
 
 app.use(cors());
-app.use(express.json({ limit: "2mb" }));
+app.use(express.json({ limit: "50mb" }));
 
 const clientBuildCandidates = [
   path.join(__dirname, "client", "dist"),
@@ -102,34 +102,58 @@ async function callOllamaChat({ model, messages, stream, tools }) {
   return response;
 }
 
-function normalizeMessageContent(content) {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return content
-      .map((part) => {
-        if (typeof part === "string") return part;
-        if (part && typeof part === "object") {
-          if (typeof part.text === "string") return part.text;
-          if (typeof part.content === "string") return part.content;
-          if (typeof part.input_text === "string") return part.input_text;
-        }
-        return "";
-      })
-      .filter(Boolean)
-      .join("\n");
-  }
-  if (content == null) return "";
-  return String(content);
-}
-
 function normalizeMessagesForOllama(messages) {
   if (!Array.isArray(messages)) return [];
+  
   return messages.map((msg) => {
+    let textContent = "";
+    const images = [];
+
+    // Cursor/OpenAI schickt content oft als Array, wenn Dateien angehängt sind
+    if (typeof msg.content === "string") {
+      textContent = msg.content;
+    } else if (Array.isArray(msg.content)) {
+      const textParts = [];
+      for (const part of msg.content) {
+        if (typeof part === "string") {
+          textParts.push(part);
+        } else if (part && typeof part === "object") {
+          // Standard Text-Teil
+          if (part.type === "text" && part.text) {
+            textParts.push(part.text);
+          } 
+          // Bild-Teil (Cursor schickt Bilder als Data-URLs)
+          else if (part.type === "image_url" && part.image_url?.url) {
+            // Ollama erwartet reines Base64 ohne den "data:image/jpeg;base64," Prefix
+            const base64Data = part.image_url.url.replace(/^data:image\/\w+;base64,/, "");
+            images.push(base64Data);
+          } 
+          // Fallbacks für andere Formate
+          else if (part.text) {
+            textParts.push(part.text);
+          } else if (part.content) {
+            textParts.push(part.content);
+          } else if (part.input_text) {
+            textParts.push(part.input_text);
+          }
+        }
+      }
+      textContent = textParts.join("\n");
+    } else if (msg.content != null) {
+      textContent = String(msg.content);
+    }
+
     const normalized = {
       role: msg?.role || "user",
-      content: normalizeMessageContent(msg?.content),
+      content: textContent,
     };
-    // Assistant messages that contain tool_calls (convert OpenAI → Ollama format)
+
+    // Bilder als separates Array für Ollama anhängen
+    if (images.length > 0) {
+      normalized.images = images;
+    }
+
+    // Tool Calls (OpenAI -> Ollama Konvertierung beibehalten)
     if (Array.isArray(msg?.tool_calls) && msg.tool_calls.length > 0) {
       normalized.tool_calls = msg.tool_calls.map((tc) => ({
         function: {
@@ -141,6 +165,7 @@ function normalizeMessagesForOllama(messages) {
         },
       }));
     }
+    
     return normalized;
   });
 }
