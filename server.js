@@ -98,6 +98,34 @@ async function callOllamaChat({ model, messages, stream }) {
   return response;
 }
 
+function normalizeMessageContent(content) {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (typeof part === "string") return part;
+        if (part && typeof part === "object") {
+          if (typeof part.text === "string") return part.text;
+          if (typeof part.content === "string") return part.content;
+          if (typeof part.input_text === "string") return part.input_text;
+        }
+        return "";
+      })
+      .filter(Boolean)
+      .join("\n");
+  }
+  if (content == null) return "";
+  return String(content);
+}
+
+function normalizeMessagesForOllama(messages) {
+  if (!Array.isArray(messages)) return [];
+  return messages.map((msg) => ({
+    role: msg?.role || "user",
+    content: normalizeMessageContent(msg?.content),
+  }));
+}
+
 /* ── Auth routes ──────────────────────────────────────────── */
 app.post("/api/login", async (req, res) => {
   const username = String(req.body?.username || "").trim();
@@ -350,7 +378,12 @@ app.post("/v1/chat/completions", authIfNeeded, async (req, res) => {
       return res.status(400).json({ error: { message: "messages must be an array" } });
     }
 
-    const ollamaResponse = await callOllamaChat({ model, messages, stream: Boolean(stream) });
+    const normalizedMessages = normalizeMessagesForOllama(messages);
+    const ollamaResponse = await callOllamaChat({
+      model,
+      messages: normalizedMessages,
+      stream: Boolean(stream),
+    });
 
     if (stream) {
       res.setHeader("Content-Type", "text/event-stream");
@@ -456,7 +489,7 @@ async function handleObsidianRequest(req, res) {
       fix:
         "Task: correction. Fix grammar, spelling, and clarity. Return ONLY the corrected content. No explanations, no markdown fences.",
       tikz_figure:
-        `Task: tikz figure. Generate a TikZ figure based on prompt and context.
+        `Task: tikz figure. Generate a TikZ figure based on prompt and context. Create the figure with simple logic, so it will definitely compile!
         
         Good example:
         \`\`\`tikz

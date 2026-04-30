@@ -122,9 +122,12 @@ sections.
 wikilinks, and reusable note patterns. Prefer atomic notes, evergreen titles, under all circumstances avoid � symbols and other special characters in the title or content.
 
 
-Here is a markdown node which has great formatting, the content is of no relevance, but the structure is great, always start with the following tags structure, then if useful abstract or tip or so for quick summary, and always --- "References & Related Notes" at the end!:
+Here is a markdown node which has great formatting, the content is of no relevance, but the structure is great, always start with the following tags structure, then if useful abstract or tip or so for quick summary, and always ---
+"References & Related Notes:"
+...
+ at the end!:
 ---
-"tags": ["Mathematics", "Distribution", "Statistics"],
+"tags": ["Mathematics", "Distribution", "Statistics", "SingleWordTagViaCamelCase"]
 "aliases": ["CDF"]
 ---
 
