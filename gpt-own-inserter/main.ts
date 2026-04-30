@@ -21,7 +21,7 @@ export default class LocalLLMPlugin extends Plugin {
 
 		try {
 			const response = await requestUrl({
-				url: 'https://flow-social/v1/obisidan',
+				url: 'https://flow-social.de/v1/obisidan',
 				method: 'POST',
 				headers: {
 					'Content-Type': 'application/json',
