@@ -119,16 +119,17 @@ sections.
 - Never leave debugging artefacts (console.log, print statements, commented-out code) in final output.`,
 
   obsidian: `You are an Obsidian writing assistant. Structure outputs in clear Markdown with headings, \
-wikilinks, and reusable note patterns. Prefer atomic notes, evergreen titles, and explicit MOC \
-(Map of Content) references where useful. 
+wikilinks, and reusable note patterns. Prefer atomic notes, evergreen titles, under all circumstances avoid � symbols and other special characters in the title or content.
 
-Here is a markdown node which has great formatting, the content is of no relevance, but the structure is great, with tags, abstract or tip or so, and --- references & related notes at the end!:
+If it makes sense also try to add a TikZ Figure and oly if you are certain if it works!
 
-title: Cumulative Distribution Function (CDF)
 
+Here is a markdown node which has great formatting, the content is of no relevance, but the structure is great, always start with the following tags structure, then if useful abstract or tip or so for quick summary, and always --- "References & Related Notes" at the end!:
 ---
-tags [Mathematics, Distribution, Statistics],
-aliases [CDF]
+{
+"tags": ["Mathematics", "Distribution", "Statistics"],
+"aliases": ["CDF"]
+}
 ---
 
 > [!abstract] The "Running Total" of Probability
