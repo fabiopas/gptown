@@ -29,14 +29,18 @@ var LocalLLMPlugin = class extends import_obsidian.Plugin {
       id: "open-llm-popup",
       name: "\xD6ffne lokales LLM Popup (mit Notiz-Kontext)",
       editorCallback: (editor, view) => {
-        new LLMInputModal(this.app, async (promptText) => {
-          await this.callLocalLLM(promptText, editor);
+        new LLMInputModal(this.app, async (promptText, mode) => {
+          await this.callLocalLLM(promptText, editor, mode);
         }).open();
       }
     });
   }
-  async callLocalLLM(prompt, editor) {
+  async callLocalLLM(prompt, editor, mode = "auto") {
     const noteContent = editor.getValue();
+    const selectedTextRaw = editor.getSelection();
+    const selectedText = selectedTextRaw.trim();
+    const hasSelection = selectedText.length > 0;
+    const effectiveMode = this.resolveEffectiveMode(mode, hasSelection);
     const spinnerFrames = ["\u280B", "\u2819", "\u2839", "\u2838", "\u283C", "\u2834", "\u2826", "\u2827", "\u2807", "\u280F"];
     let frameIndex = 0;
     const spinnerNotice = new import_obsidian.Notice("", 0);
@@ -54,7 +58,13 @@ var LocalLLMPlugin = class extends import_obsidian.Plugin {
           "Content-Type": "application/json",
           "Authorization": "Bearer gptown-api-key"
         },
-        body: JSON.stringify({ prompt, noteContent, temperature: 0.7 }),
+        body: JSON.stringify({
+          prompt,
+          noteContent,
+          selectedText,
+          mode: effectiveMode,
+          temperature: 0.7
+        }),
         signal: controller.signal
       });
       clearTimeout(timeout);
@@ -65,10 +75,7 @@ var LocalLLMPlugin = class extends import_obsidian.Plugin {
         const reply = data?.choices?.[0]?.message?.content;
         if (reply) {
           await this.showCheckboxAnimation();
-          const cursor = editor.getCursor();
-          editor.replaceRange("\n\n", cursor);
-          const insertStart = { line: cursor.line + 2, ch: 0 };
-          await this.typewriterInsert(editor, reply + "\n\n", insertStart);
+          await this.applyReply(editor, reply, effectiveMode);
         } else {
           new import_obsidian.Notice("Fehler: Keine g\xFCltige Antwort erhalten.");
         }
@@ -85,6 +92,25 @@ var LocalLLMPlugin = class extends import_obsidian.Plugin {
         new import_obsidian.Notice("Verbindungsfehler. Ist dein lokales LLM gestartet? Details in der Konsole.");
       }
     }
+  }
+  resolveEffectiveMode(mode, hasSelection) {
+    if (mode !== "auto") return mode;
+    return hasSelection ? "selection" : "note_replace";
+  }
+  async applyReply(editor, reply, mode) {
+    if (mode === "selection") {
+      const from = editor.getCursor("from");
+      const to = editor.getCursor("to");
+      editor.replaceRange("", from, to);
+      await this.typewriterInsert(editor, reply, from);
+      return;
+    }
+    const start = { line: 0, ch: 0 };
+    const lastLine = Math.max(editor.lineCount() - 1, 0);
+    const end = { line: lastLine, ch: editor.getLine(lastLine)?.length ?? 0 };
+    editor.replaceRange("", start, end);
+    await this.typewriterInsert(editor, `${reply}
+`, start);
   }
   async showCheckboxAnimation() {
     const frames = [
@@ -141,17 +167,33 @@ var LLMInputModal = class extends import_obsidian.Modal {
     textArea.style.width = "100%";
     textArea.style.marginBottom = "15px";
     textArea.style.resize = "vertical";
+    const quickRow = contentEl.createEl("div");
+    quickRow.style.display = "flex";
+    quickRow.style.gap = "8px";
+    quickRow.style.flexWrap = "wrap";
+    quickRow.style.marginBottom = "12px";
+    this.createQuickButton(quickRow, "Note versch\xF6nern", "beautify", "Verbessere die gesamte Notiz sprachlich und strukturell.");
+    this.createQuickButton(quickRow, "Zusammenfassen", "summarize", "Fasse die gesamte Notiz kompakt zusammen.");
+    this.createQuickButton(quickRow, "Korrigieren", "fix", "Korrigiere Rechtschreibung und Grammatik.");
     const submitBtn = contentEl.createEl("button", { text: "Absenden" });
     submitBtn.style.backgroundColor = "var(--interactive-accent)";
     submitBtn.style.color = "var(--text-on-accent)";
     submitBtn.addEventListener("click", () => {
       const text = textArea.value.trim();
       if (text.length > 0) {
-        this.onSubmit(text);
+        this.onSubmit(text, "auto");
         this.close();
       } else {
         new import_obsidian.Notice("Bitte gib einen Text ein.");
       }
+    });
+  }
+  createQuickButton(container, label, mode, promptTemplate) {
+    const button = container.createEl("button", { text: label });
+    button.style.padding = "6px 10px";
+    button.addEventListener("click", () => {
+      this.onSubmit(promptTemplate, mode);
+      this.close();
     });
   }
   onClose() {

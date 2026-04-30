@@ -151,7 +151,6 @@ aliases [CDF]
     \node[below right] at (0,0) {$0$};
 
     % Draw the CDF Curve (using a logistic curve to approximate an S-shape CDF)
-    \draw[thick, red, domain=-3.5:3.5, samples=100] plot (\x, {1/(1+exp(-\x*1.5))});
 
     % Annotations
     \node[red, right] at (0.5, 0.4) {Accumulating Probability};
