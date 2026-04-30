@@ -102,6 +102,7 @@ const userDisplayName  = document.getElementById("user-display-name");
 const statusEl         = document.getElementById("status");
 const dotEl            = document.getElementById("status-dot");
 const currentModelEl   = document.getElementById("current-model");
+const templateSelectEl = document.getElementById("template-select");
 
 const chatEl           = document.getElementById("chat");
 const formEl           = document.getElementById("chat-form");
@@ -119,14 +120,17 @@ const newPasswordEl    = document.getElementById("new-password");
 const newIsAdminEl     = document.getElementById("new-is-admin");
 const addUserError     = document.getElementById("add-user-error");
 const addUserBtn       = document.getElementById("add-user-btn");
+const templateAdminListEl = document.getElementById("template-admin-list");
 
 /* ── Session / state ─────────────────────────────────────── */
 const SESSION_KEY  = "gptown_token";
 const CURRENT_KEY  = "gptown_current_conv";
+const TEMPLATE_KEY = "gptown_template_id";
 
 let currentUser = null;   // { username, isAdmin }
 let currentConvId = null; // string | null
 let currentConvIsEmpty = true;
+let currentTemplateId = "none";
 
 function getToken()   { return sessionStorage.getItem(SESSION_KEY); }
 function saveToken(t) { sessionStorage.setItem(SESSION_KEY, t); }
@@ -140,6 +144,17 @@ function getLastConvId() { return sessionStorage.getItem(CURRENT_KEY) || ""; }
 function setLastConvId(id) {
   if (id) sessionStorage.setItem(CURRENT_KEY, id);
   else sessionStorage.removeItem(CURRENT_KEY);
+}
+
+function getTemplateId() { return sessionStorage.getItem(TEMPLATE_KEY) || "none"; }
+function setTemplateId(id) {
+  const normalized = id || "none";
+  sessionStorage.setItem(TEMPLATE_KEY, normalized);
+  currentTemplateId = normalized;
+}
+
+function templateLabel(templateId) {
+  return templateId === "none" ? "gemma4" : `gemma4-${templateId}`;
 }
 
 /* ── API helpers ─────────────────────────────────────────── */
@@ -165,6 +180,35 @@ async function checkHealth() {
   } catch {
     setStatus("Offline", "error");
   }
+}
+
+async function loadTemplates() {
+  let templates = [];
+  try {
+    const res = await apiFetch("/api/templates");
+    if (!res.ok) throw new Error("Failed to load templates");
+    templates = await res.json();
+  } catch {
+    templateSelectEl.innerHTML = `<option value="none">${templateLabel("none")}</option>`;
+    setTemplateId("none");
+    return;
+  }
+
+  if (!Array.isArray(templates) || templates.length === 0) {
+    templateSelectEl.innerHTML = `<option value="none">${templateLabel("none")}</option>`;
+    setTemplateId("none");
+    return;
+  }
+
+  templateSelectEl.innerHTML = templates
+    .map((t) => `<option value="${t.id}">${templateLabel(t.id)}</option>`)
+    .join("");
+
+  const preferred = getTemplateId();
+  const exists = templates.some((t) => t.id === preferred);
+  const selected = exists ? preferred : "none";
+  templateSelectEl.value = selected;
+  setTemplateId(selected);
 }
 
 /* ── Conversation list ───────────────────────────────────── */
@@ -479,6 +523,9 @@ function setLoading(on) {
 }
 
 stopBtn.addEventListener("click", () => { abortController?.abort(); });
+templateSelectEl.addEventListener("change", () => {
+  setTemplateId(templateSelectEl.value);
+});
 
 /* ── Auto-resize textarea ────────────────────────────────── */
 inputEl.addEventListener("input", () => {
@@ -533,7 +580,12 @@ formEl.addEventListener("submit", async (e) => {
     const res = await fetch("/api/chat", {
       method: "POST",
       headers: authedHeaders(),
-      body: JSON.stringify({ conversation_id: currentConvId, message, stream: true }),
+      body: JSON.stringify({
+        conversation_id: currentConvId,
+        message,
+        stream: true,
+        template_id: currentTemplateId,
+      }),
       signal: abortController.signal,
     });
 
@@ -597,6 +649,7 @@ formEl.addEventListener("submit", async (e) => {
 async function openAdminModal() {
   adminModal.hidden = false;
   await refreshUsersList();
+  await refreshTemplatePrompts();
 }
 
 function closeAdminModal() {
@@ -665,6 +718,76 @@ async function refreshUsersList() {
     });
   } catch {
     usersListEl.innerHTML = `<p class="loading-text">Failed to load users.</p>`;
+  }
+}
+
+async function refreshTemplatePrompts() {
+  templateAdminListEl.innerHTML = `<p class="loading-text">Loading…</p>`;
+  try {
+    const res = await apiFetch("/api/admin/templates");
+    const templates = await res.json();
+    if (!res.ok) {
+      templateAdminListEl.innerHTML = `<p class="loading-text">Failed to load templates.</p>`;
+      return;
+    }
+
+    templateAdminListEl.innerHTML = "";
+    templates.forEach((template) => {
+      const card = document.createElement("div");
+      card.className = "template-admin-item";
+
+      const title = document.createElement("div");
+      title.className = "template-admin-title";
+      title.textContent = template.id === "none" ? "model" : `model-${template.id}`;
+
+      const textarea = document.createElement("textarea");
+      textarea.className = "template-admin-textarea";
+      textarea.value = template.system_text || "";
+      textarea.placeholder = "System prompt for this template…";
+
+      const row = document.createElement("div");
+      row.className = "template-admin-actions";
+
+      const status = document.createElement("span");
+      status.className = "template-admin-status";
+
+      const saveBtn = document.createElement("button");
+      saveBtn.className = "login-btn template-save-btn";
+      saveBtn.type = "button";
+      saveBtn.textContent = "Save";
+      saveBtn.addEventListener("click", async () => {
+        saveBtn.disabled = true;
+        saveBtn.textContent = "Saving…";
+        status.textContent = "";
+        try {
+          const saveRes = await apiFetch(`/api/admin/templates/${template.id}`, {
+            method: "PATCH",
+            body: JSON.stringify({ system_text: textarea.value }),
+          });
+          const saveData = await saveRes.json().catch(() => ({}));
+          if (!saveRes.ok) {
+            status.textContent = saveData.error || "Save failed";
+            return;
+          }
+          status.textContent = "Saved";
+          await loadTemplates();
+          if (template.id === currentTemplateId) {
+            setStatus("Template updated", "online");
+          }
+        } catch {
+          status.textContent = "Request failed";
+        } finally {
+          saveBtn.disabled = false;
+          saveBtn.textContent = "Save";
+        }
+      });
+
+      row.append(status, saveBtn);
+      card.append(title, textarea, row);
+      templateAdminListEl.appendChild(card);
+    });
+  } catch {
+    templateAdminListEl.innerHTML = `<p class="loading-text">Failed to load templates.</p>`;
   }
 }
 
@@ -768,6 +891,7 @@ async function showApp() {
   adminBtn.hidden = !currentUser.isAdmin;
 
   await renderChatList();
+  await loadTemplates();
 
   const lastId = getLastConvId();
   if (lastId) {
@@ -788,6 +912,7 @@ function showLogin() {
   loginScreen.hidden = false;
   chatEl.innerHTML = "";
   currentConvId = null;
+  currentTemplateId = "none";
   usernameEl.value = "";
   passwordEl.value = "";
   loginError.hidden = true;

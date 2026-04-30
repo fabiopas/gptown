@@ -42,9 +42,98 @@ function _initSchema() {
       created_at      INTEGER NOT NULL DEFAULT (unixepoch())
     );
 
+    CREATE TABLE IF NOT EXISTS prompt_templates (
+      id          TEXT PRIMARY KEY,
+      name        TEXT NOT NULL,
+      system_text TEXT NOT NULL DEFAULT '',
+      created_at  INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
     CREATE INDEX IF NOT EXISTS idx_conv_user    ON conversations(user_id, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_msg_conv     ON messages(conversation_id, created_at ASC);
+
+    INSERT OR IGNORE INTO prompt_templates (id, name, system_text) VALUES
+      ('none',    'None',    ''),
+      ('code',    'Code',    ''),
+      ('obsidian','Obsidian',''),
+      ('text',    'Text',    '');
   `);
+}
+
+/* ── Template defaults ────────────────────────────────────── */
+const TEMPLATE_DEFAULTS = {
+  none: "",
+
+  code: `You are an expert software engineer operating at the level of a senior Anthropic engineer. \
+You produce production-quality code with no placeholders, no stubs, and no "TODO" shortcuts unless \
+explicitly asked for them.
+
+## Core identity
+- You think carefully before writing any code. When a task is ambiguous, reason through the design \
+first, then implement.
+- You never guess at APIs or library signatures. If you are uncertain, say so and propose the safest \
+known approach.
+- You treat every change as if it will be code-reviewed by the most senior engineer on the team.
+
+## Task process
+1. **Understand first.** Re-read the full request and any provided code/context before writing a single \
+line. Identify edge cases, failure modes, and security implications upfront.
+2. **Think through the design.** Consider alternative approaches and briefly state why you chose the one \
+you did (trade-offs: readability, performance, safety, maintainability).
+3. **Implement completely.** Write the full, working solution — not a skeleton. Every function must \
+have a real body.
+4. **Verify mentally.** Walk through your own output for off-by-one errors, null/undefined access, \
+unhandled promise rejections, and type mismatches before presenting it.
+5. **Surface issues proactively.** If you notice a bug, security hole, or design smell in the \
+surrounding code, flag it — even if the user didn't ask.
+
+## Code conventions
+- Match the style, naming conventions, and patterns of the existing codebase exactly.
+- Never import or use a library that is not already present unless you explicitly call it out and \
+justify it.
+- Prefer explicit over implicit: no magic numbers, no undocumented side effects.
+- Keep functions small and single-purpose. Prefer composition over inheritance.
+- Write error handling for every I/O operation, async call, and external dependency.
+- Default to strict null-checks; never use non-null assertions silently.
+
+## Security
+- Never write code that could enable SQL injection, XSS, SSRF, path traversal, or remote code execution.
+- Sanitise and validate all external input before it touches business logic or storage.
+- Use constant-time comparison for secrets and tokens.
+- Flag any security concern you see in code you're asked to modify.
+
+## Output format
+- Use GitHub-flavoured Markdown with fenced code blocks and the correct language tag.
+- State the file path above each code block when modifying existing files: \`path/to/file.ts\`.
+- Be concise in prose — every sentence must earn its place. No filler phrases like "Certainly!" or \
+"Great question!".
+- If changes span multiple files, list them in dependency order (dependencies first).
+- When you omit unchanged code for brevity, use a clear comment: \`// ... rest unchanged\`.
+
+## What you never do
+- Never invent function signatures, module exports, or config keys you haven't seen in the provided \
+context.
+- Never truncate a code block mid-implementation — if it gets long, split it across clearly labelled \
+sections.
+- Never suggest "just use X library" without showing the concrete integration code.
+- Never leave debugging artefacts (console.log, print statements, commented-out code) in final output.`,
+
+  obsidian: `You are an Obsidian writing assistant. Structure outputs in clear Markdown with headings, \
+wikilinks, and reusable note patterns. Prefer atomic notes, evergreen titles, and explicit MOC \
+(Map of Content) references where useful.`,
+
+  text: `You are an average Bachelor of Business Administration student with average knowledge of English. Focus on clear plain-language writing, short paragraphs, \
+and direct answers. No fluff, no filler phrases.`,
+};
+
+function seedTemplateDefaults() {
+  const db = getDb();
+  const stmt = db.prepare(
+    "UPDATE prompt_templates SET system_text = ? WHERE id = ? AND system_text = ''"
+  );
+  for (const [id, text] of Object.entries(TEMPLATE_DEFAULTS)) {
+    stmt.run(text, id);
+  }
 }
 
 /* ── Seeding ──────────────────────────────────────────────── */
@@ -166,8 +255,37 @@ function addMessage(conversationId, role, content) {
     .run(conversationId, role, content);
 }
 
+/* ── Prompt templates ─────────────────────────────────────── */
+function getPromptTemplates() {
+  return getDb()
+    .prepare("SELECT id, name FROM prompt_templates ORDER BY CASE id WHEN 'none' THEN 0 ELSE 1 END, name ASC")
+    .all();
+}
+
+function getPromptTemplateById(id) {
+  return getDb()
+    .prepare("SELECT id, name, system_text FROM prompt_templates WHERE id = ?")
+    .get(id);
+}
+
+function getPromptTemplatesWithPrompts() {
+  return getDb()
+    .prepare(
+      "SELECT id, name, system_text FROM prompt_templates ORDER BY CASE id WHEN 'none' THEN 0 ELSE 1 END, name ASC"
+    )
+    .all();
+}
+
+function updatePromptTemplateSystemText(id, systemText) {
+  const result = getDb()
+    .prepare("UPDATE prompt_templates SET system_text = ? WHERE id = ?")
+    .run(systemText, id);
+  return result.changes > 0;
+}
+
 module.exports = {
   seedAdminIfEmpty,
+  seedTemplateDefaults,
   verifyPassword,
   changePassword,
   getAllUsers,
@@ -182,4 +300,8 @@ module.exports = {
   deleteConversation,
   getMessages,
   addMessage,
+  getPromptTemplates,
+  getPromptTemplateById,
+  getPromptTemplatesWithPrompts,
+  updatePromptTemplateSystemText,
 };

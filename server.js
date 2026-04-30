@@ -23,10 +23,19 @@ const sessions = new Map();
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
 
-const distPath = path.join(__dirname, "client", "dist");
-const hasBuiltClient = fs.existsSync(path.join(distPath, "index.html"));
+const clientBuildCandidates = [
+  path.join(__dirname, "client", "dist"),
+  path.join(__dirname, "client", "client", "dist"),
+];
+const distPath = clientBuildCandidates.find((candidate) =>
+  fs.existsSync(path.join(candidate, "index.html"))
+);
+const hasBuiltClient = Boolean(distPath);
 if (hasBuiltClient) {
   app.use(express.static(distPath));
+} else {
+  const devClientPath = path.join(__dirname, "client");
+  app.use(express.static(devClientPath));
 }
 
 /* ── Middleware ───────────────────────────────────────────── */
@@ -139,10 +148,14 @@ app.get("/api/conversations/:id/messages", requireSession, (req, res) => {
   return res.json(db.getMessages(req.params.id));
 });
 
+app.get("/api/templates", requireSession, (_req, res) => {
+  return res.json(db.getPromptTemplates());
+});
+
 /* ── Chat (UI) ────────────────────────────────────────────── */
 app.post("/api/chat", requireSession, async (req, res) => {
   try {
-    const { conversation_id, message, stream = false } = req.body || {};
+    const { conversation_id, message, stream = false, template_id = "none" } = req.body || {};
 
     if (!message || typeof message !== "string") {
       return res.status(400).json({ error: "message is required" });
@@ -158,9 +171,17 @@ app.post("/api/chat", requireSession, async (req, res) => {
     db.touchConversation(conversation_id);
 
     const messages = db.getMessages(conversation_id);
+    const template = db.getPromptTemplateById(String(template_id || "none"));
+    if (!template) {
+      return res.status(400).json({ error: "Invalid template_id" });
+    }
+    const messagesForModel = template.system_text
+      ? [{ role: "system", content: template.system_text }, ...messages]
+      : messages;
+
     const ollamaResponse = await callOllamaChat({
       model: DEFAULT_MODEL,
-      messages,
+      messages: messagesForModel,
       stream: Boolean(stream),
     });
 
@@ -272,6 +293,24 @@ app.delete("/api/admin/users/:id", requireSession, requireAdmin, (req, res) => {
   return res.json({ ok: true });
 });
 
+app.get("/api/admin/templates", requireSession, requireAdmin, (_req, res) => {
+  return res.json(db.getPromptTemplatesWithPrompts());
+});
+
+app.patch("/api/admin/templates/:id", requireSession, requireAdmin, (req, res) => {
+  const { system_text } = req.body || {};
+  if (typeof system_text !== "string") {
+    return res.status(400).json({ error: "system_text must be a string" });
+  }
+
+  const updated = db.updatePromptTemplateSystemText(req.params.id, system_text);
+  if (!updated) {
+    return res.status(404).json({ error: "Template not found" });
+  }
+
+  return res.json({ ok: true });
+});
+
 /* ── OpenAI-compatible endpoints (for Cursor etc.) ────────── */
 app.get("/v1/models", authIfNeeded, (_req, res) => {
   res.json({
@@ -353,22 +392,24 @@ app.post("/v1/chat/completions", authIfNeeded, async (req, res) => {
 });
 
 /* ── SPA fallback ─────────────────────────────────────────── */
-if (hasBuiltClient) {
-  app.get("*", (req, res, next) => {
-    if (
-      req.path.startsWith("/api") ||
-      req.path.startsWith("/v1") ||
-      req.path === "/health"
-    ) {
-      return next();
-    }
+app.get("*", (req, res, next) => {
+  if (
+    req.path.startsWith("/api") ||
+    req.path.startsWith("/v1") ||
+    req.path === "/health"
+  ) {
+    return next();
+  }
+  if (hasBuiltClient) {
     return res.sendFile(path.join(distPath, "index.html"));
-  });
-}
+  }
+  return res.sendFile(path.join(__dirname, "client", "index.html"));
+});
 
 /* ── Start ────────────────────────────────────────────────── */
 async function start() {
   await db.seedAdminIfEmpty(UI_USER, UI_PASSWORD);
+  db.seedTemplateDefaults();
   app.listen(PORT, () => {
     console.log(`API server running on http://localhost:${PORT}`);
   });
