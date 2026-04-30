@@ -83,10 +83,13 @@ function requireAdmin(req, res, next) {
 }
 
 /* ── Ollama proxy helper ──────────────────────────────────── */
-async function callOllamaChat({ model, messages, stream, tools }) {
+async function callOllamaChat({ model, messages, stream, tools, toolChoice }) {
   const body = { model: model || DEFAULT_MODEL, messages, stream };
   if (Array.isArray(tools) && tools.length > 0) {
     body.tools = tools;
+  }
+  if (toolChoice !== undefined) {
+    body.tool_choice = toolChoice;
   }
   const response = await fetch(`${OLLAMA_BASE_URL}/api/chat`, {
     method: "POST",
@@ -428,6 +431,7 @@ app.post("/v1/chat/completions", authIfNeeded, async (req, res) => {
       messages: normalizedMessages,
       stream: Boolean(stream),
       tools,
+      toolChoice: tool_choice,
     });
 
     const resolvedModel = model || DEFAULT_MODEL;
@@ -457,6 +461,7 @@ app.post("/v1/chat/completions", authIfNeeded, async (req, res) => {
       const reader = ollamaResponse.body.getReader();
       const decoder = new TextDecoder("utf-8");
       let buffer = "";
+      const collectedToolCalls = [];
 
       while (true) {
         const { done, value } = await reader.read();
@@ -473,11 +478,14 @@ app.post("/v1/chat/completions", authIfNeeded, async (req, res) => {
               const chunk = JSON.parse(line);
               const token = chunk.message?.content || "";
               const ollamaToolCalls = chunk.message?.tool_calls;
+              if (Array.isArray(ollamaToolCalls) && ollamaToolCalls.length > 0) {
+                collectedToolCalls.push(...ollamaToolCalls);
+              }
 
               if (chunk.done === true) {
-                if (Array.isArray(ollamaToolCalls) && ollamaToolCalls.length > 0) {
+                if (collectedToolCalls.length > 0) {
                   // Convert Ollama tool_calls → OpenAI format and send in one delta
-                  const toolCalls = ollamaToolCalls.map((tc, idx) => ({
+                  const toolCalls = collectedToolCalls.map((tc, idx) => ({
                     index: idx,
                     id: `call_${completionId}_${idx}`,
                     type: "function",
