@@ -13,9 +13,15 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || "http://127.0.0.1:11434";
 const DEFAULT_MODEL = process.env.OLLAMA_MODEL || "gemma4:e4b";
+const UI_MODELS = [
+  "gemma4:latest",
+  "llama2-uncensored:7b",
+  "qwen2.5-coder:7b",
+];
 const API_KEY = process.env.API_KEY || "local-dev-key";
 const UI_USER = (process.env.UI_USER || "admin").trim();
 const UI_PASSWORD = (process.env.UI_PASSWORD || "changeme").trim();
+let activeModel = UI_MODELS.includes(DEFAULT_MODEL) ? DEFAULT_MODEL : UI_MODELS[0];
 
 function logRouteError(route, error) {
   const message = error instanceof Error ? error.message : String(error);
@@ -103,6 +109,76 @@ async function callOllamaChat({ model, messages, stream, tools, toolChoice }) {
   }
 
   return response;
+}
+
+async function callOllamaPs() {
+  const response = await fetch(`${OLLAMA_BASE_URL}/api/ps`);
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Ollama ps error ${response.status}: ${body}`);
+  }
+  return response.json();
+}
+
+async function unloadOllamaModel(model) {
+  if (!model) return;
+  const response = await fetch(`${OLLAMA_BASE_URL}/api/generate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model,
+      prompt: "",
+      keep_alive: 0,
+      stream: false,
+    }),
+  });
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Ollama unload error ${response.status}: ${body}`);
+  }
+}
+
+async function warmupOllamaModel(model) {
+  const response = await fetch(`${OLLAMA_BASE_URL}/api/generate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model,
+      prompt: "",
+      keep_alive: "30m",
+      stream: false,
+    }),
+  });
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Ollama warmup error ${response.status}: ${body}`);
+  }
+}
+
+async function switchActiveModel(nextModel) {
+  if (!UI_MODELS.includes(nextModel)) {
+    throw new Error("Unsupported model");
+  }
+
+  if (nextModel === activeModel) {
+    await warmupOllamaModel(nextModel);
+    return activeModel;
+  }
+
+  const ps = await callOllamaPs();
+  const loadedModels = Array.isArray(ps?.models)
+    ? ps.models.map((entry) => entry?.model).filter(Boolean)
+    : [];
+
+  for (const model of loadedModels) {
+    if (model !== nextModel) {
+      await unloadOllamaModel(model);
+    }
+  }
+
+  await warmupOllamaModel(nextModel);
+  activeModel = nextModel;
+  return activeModel;
 }
 
 function normalizeMessagesForOllama(messages) {
@@ -212,7 +288,25 @@ app.post("/api/me/change-password", requireSession, async (req, res) => {
 
 /* ── Health ───────────────────────────────────────────────── */
 app.get("/health", (_req, res) => {
-  res.json({ ok: true, model: DEFAULT_MODEL, ollama: OLLAMA_BASE_URL });
+  res.json({ ok: true, model: activeModel, ollama: OLLAMA_BASE_URL });
+});
+
+app.get("/api/models", requireSession, (_req, res) => {
+  return res.json({ models: UI_MODELS, activeModel });
+});
+
+app.post("/api/models/select", requireSession, async (req, res) => {
+  try {
+    const model = String(req.body?.model || "").trim();
+    if (!model) return res.status(400).json({ error: "model is required" });
+    if (!UI_MODELS.includes(model)) return res.status(400).json({ error: "Invalid model" });
+
+    const selected = await switchActiveModel(model);
+    return res.json({ ok: true, activeModel: selected });
+  } catch (error) {
+    logRouteError("POST /api/models/select", error);
+    return res.status(500).json({ error: error.message || "Model switch failed" });
+  }
 });
 
 /* ── Conversations ────────────────────────────────────────── */
@@ -277,7 +371,7 @@ app.post("/api/chat", requireSession, async (req, res) => {
       : messages;
 
     const ollamaResponse = await callOllamaChat({
-      model: DEFAULT_MODEL,
+      model: activeModel,
       messages: messagesForModel,
       stream: Boolean(stream),
     });
@@ -413,7 +507,7 @@ app.patch("/api/admin/templates/:id", requireSession, requireAdmin, (req, res) =
 app.get("/v1/models", authIfNeeded, (_req, res) => {
   res.json({
     object: "list",
-    data: [{ id: DEFAULT_MODEL, object: "model", owned_by: "local" }],
+    data: UI_MODELS.map((id) => ({ id, object: "model", owned_by: "local" })),
   });
 });
 
@@ -434,7 +528,7 @@ app.post("/v1/chat/completions", authIfNeeded, async (req, res) => {
       toolChoice: tool_choice,
     });
 
-    const resolvedModel = model || DEFAULT_MODEL;
+    const resolvedModel = model || activeModel;
 
     if (stream) {
       res.setHeader("Content-Type", "text/event-stream");
@@ -768,6 +862,12 @@ app.get("*", (req, res, next) => {
 async function start() {
   await db.seedAdminIfEmpty(UI_USER, UI_PASSWORD);
   db.seedTemplateDefaults();
+  try {
+    await switchActiveModel(activeModel);
+    console.log(`Active model: ${activeModel}`);
+  } catch (error) {
+    logRouteError("startup model warmup", error);
+  }
   app.listen(PORT, () => {
     console.log(`API server running on http://localhost:${PORT}`);
   });

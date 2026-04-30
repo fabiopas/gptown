@@ -102,6 +102,7 @@ const userDisplayName  = document.getElementById("user-display-name");
 const statusEl         = document.getElementById("status");
 const dotEl            = document.getElementById("status-dot");
 const currentModelEl   = document.getElementById("current-model");
+const modelSelectEl    = document.getElementById("model-select");
 const templateSelectEl = document.getElementById("template-select");
 
 const chatEl           = document.getElementById("chat");
@@ -179,6 +180,26 @@ async function checkHealth() {
     currentModelEl.textContent = model;
   } catch {
     setStatus("Offline", "error");
+  }
+}
+
+async function loadModels() {
+  try {
+    const res = await apiFetch("/api/models");
+    if (!res.ok) throw new Error("Failed to load models");
+    const data = await res.json();
+
+    const models = Array.isArray(data.models) ? data.models : [];
+    if (models.length === 0) return;
+
+    modelSelectEl.innerHTML = models
+      .map((model) => `<option value="${model}">${model}</option>`)
+      .join("");
+    modelSelectEl.value = data.activeModel || models[0];
+    currentModelEl.textContent = modelSelectEl.value;
+  } catch {
+    // Fallback to static options in HTML
+    currentModelEl.textContent = modelSelectEl.value || "Model";
   }
 }
 
@@ -524,6 +545,37 @@ function setLoading(on) {
 }
 
 stopBtn.addEventListener("click", () => { abortController?.abort(); });
+modelSelectEl.addEventListener("change", async () => {
+  const targetModel = modelSelectEl.value;
+  const previousModel = currentModelEl.textContent;
+  const hasPreviousOption = Array.from(modelSelectEl.options).some(
+    (opt) => opt.value === previousModel
+  );
+  const previousSelectValue = hasPreviousOption ? previousModel : (modelSelectEl.options[0]?.value || targetModel);
+
+  setStatus("Switching model…", "loading");
+  modelSelectEl.disabled = true;
+
+  try {
+    const res = await apiFetch("/api/models/select", {
+      method: "POST",
+      body: JSON.stringify({ model: targetModel }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.error || "Model switch failed");
+    }
+    const activeModel = data.activeModel || targetModel;
+    currentModelEl.textContent = activeModel;
+    modelSelectEl.value = activeModel;
+    setStatus(activeModel, "online");
+  } catch (err) {
+    modelSelectEl.value = previousSelectValue;
+    setStatus(`Model switch failed: ${err.message}`, "error");
+  } finally {
+    modelSelectEl.disabled = false;
+  }
+});
 templateSelectEl.addEventListener("change", () => {
   setTemplateId(templateSelectEl.value);
 });
@@ -892,6 +944,7 @@ async function showApp() {
   adminBtn.hidden = !currentUser.isAdmin;
 
   await renderChatList();
+  await loadModels();
   await loadTemplates();
 
   const lastId = getLastConvId();
