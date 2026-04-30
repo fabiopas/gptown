@@ -1,0 +1,10 @@
+{
+    "id": "gptown-inserter",
+    "name": "GPT own Inserter",
+    "version": "1.0.0",
+    "minAppVersion": "0.15.0",
+    "description": "Öffnet ein Popup, fragt ein lokales LLM an und fügt die Antwort in die Notiz ein.",
+    "author": "Dein Name",
+    "authorUrl": "",
+    "isDesktopOnly": false
+}

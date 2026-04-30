@@ -391,6 +391,97 @@ app.post("/v1/chat/completions", authIfNeeded, async (req, res) => {
   }
 });
 
+/* ── Obsidian one-shot endpoint ───────────────────────────── */
+async function handleObsidianRequest(req, res) {
+  try {
+    const { model, prompt, noteContent = "", messages, stream = false } = req.body || {};
+
+    let userMessages = [];
+    if (Array.isArray(messages) && messages.length > 0) {
+      userMessages = messages;
+    } else if (typeof prompt === "string" && prompt.trim().length > 0) {
+      userMessages = [{ role: "user", content: prompt.trim() }];
+    } else {
+      return res.status(400).json({ error: { message: "prompt or messages is required" } });
+    }
+
+    const template = db.getPromptTemplateById("obsidian");
+    const templateText = template?.system_text || "";
+    const noteContext = String(noteContent || "").trim();
+    const systemContent = noteContext
+      ? `${templateText}\n\nCurrent note content:\n---\n${noteContext}\n---`
+      : templateText;
+
+    const ollamaResponse = await callOllamaChat({
+      model,
+      messages: [{ role: "system", content: systemContent }, ...userMessages],
+      stream: Boolean(stream),
+    });
+
+    if (stream) {
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+
+      const reader = ollamaResponse.body.getReader();
+      const decoder = new TextDecoder("utf-8");
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        let newlineIndex = buffer.indexOf("\n");
+        while (newlineIndex >= 0) {
+          const line = buffer.slice(0, newlineIndex).trim();
+          buffer = buffer.slice(newlineIndex + 1);
+
+          if (line) {
+            const chunk = JSON.parse(line);
+            const token = chunk.message?.content || "";
+            const finish = chunk.done === true;
+            const payload = {
+              id: `chatcmpl-local-${Date.now()}`,
+              object: "chat.completion.chunk",
+              created: Math.floor(Date.now() / 1000),
+              model: model || DEFAULT_MODEL,
+              choices: [
+                {
+                  index: 0,
+                  delta: token ? { content: token } : {},
+                  finish_reason: finish ? "stop" : null,
+                },
+              ],
+            };
+            res.write(`data: ${JSON.stringify(payload)}\n\n`);
+          }
+
+          newlineIndex = buffer.indexOf("\n");
+        }
+      }
+
+      res.write("data: [DONE]\n\n");
+      return res.end();
+    }
+
+    const json = await ollamaResponse.json();
+    const content = json.message?.content || "";
+    return res.json({
+      id: `chatcmpl-local-${Date.now()}`,
+      object: "chat.completion",
+      created: Math.floor(Date.now() / 1000),
+      model: model || DEFAULT_MODEL,
+      choices: [{ index: 0, message: { role: "assistant", content }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+    });
+  } catch (error) {
+    return res.status(500).json({ error: { message: error.message } });
+  }
+}
+
+app.post("/v1/obisidan", authIfNeeded, handleObsidianRequest);
+
 /* ── SPA fallback ─────────────────────────────────────────── */
 app.get("*", (req, res, next) => {
   if (
