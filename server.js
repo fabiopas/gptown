@@ -61,16 +61,20 @@ function requireAdmin(req, res, next) {
 }
 
 /* ── Ollama proxy helper ──────────────────────────────────── */
-async function callOllamaChat({ model, messages, stream }) {
+async function callOllamaChat({ model, messages, stream, tools }) {
+  const body = { model: model || DEFAULT_MODEL, messages, stream };
+  if (Array.isArray(tools) && tools.length > 0) {
+    body.tools = tools;
+  }
   const response = await fetch(`${OLLAMA_BASE_URL}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model: model || DEFAULT_MODEL, messages, stream }),
+    body: JSON.stringify(body),
   });
 
   if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`Ollama error ${response.status}: ${body}`);
+    const body2 = await response.text();
+    throw new Error(`Ollama error ${response.status}: ${body2}`);
   }
 
   return response;
@@ -98,10 +102,25 @@ function normalizeMessageContent(content) {
 
 function normalizeMessagesForOllama(messages) {
   if (!Array.isArray(messages)) return [];
-  return messages.map((msg) => ({
-    role: msg?.role || "user",
-    content: normalizeMessageContent(msg?.content),
-  }));
+  return messages.map((msg) => {
+    const normalized = {
+      role: msg?.role || "user",
+      content: normalizeMessageContent(msg?.content),
+    };
+    // Assistant messages that contain tool_calls (convert OpenAI → Ollama format)
+    if (Array.isArray(msg?.tool_calls) && msg.tool_calls.length > 0) {
+      normalized.tool_calls = msg.tool_calls.map((tc) => ({
+        function: {
+          name: tc.function?.name || "",
+          arguments:
+            typeof tc.function?.arguments === "string"
+              ? (() => { try { return JSON.parse(tc.function.arguments); } catch { return {}; } })()
+              : (tc.function?.arguments ?? {}),
+        },
+      }));
+    }
+    return normalized;
+  });
 }
 
 /* ── Auth routes ──────────────────────────────────────────── */
@@ -349,7 +368,7 @@ app.get("/v1/models", authIfNeeded, (_req, res) => {
 
 app.post("/v1/chat/completions", authIfNeeded, async (req, res) => {
   try {
-    const { model, messages, stream } = req.body || {};
+    const { model, messages, stream, tools, tool_choice } = req.body || {};
 
     if (!Array.isArray(messages)) {
       return res.status(400).json({ error: { message: "messages must be an array" } });
@@ -360,12 +379,32 @@ app.post("/v1/chat/completions", authIfNeeded, async (req, res) => {
       model,
       messages: normalizedMessages,
       stream: Boolean(stream),
+      tools,
     });
+
+    const resolvedModel = model || DEFAULT_MODEL;
 
     if (stream) {
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache");
       res.setHeader("Connection", "keep-alive");
+
+      const completionId = `chatcmpl-local-${Date.now()}`;
+      const created = Math.floor(Date.now() / 1000);
+
+      const writeChunk = (delta, finishReason = null) => {
+        const payload = {
+          id: completionId,
+          object: "chat.completion.chunk",
+          created,
+          model: resolvedModel,
+          choices: [{ index: 0, delta, finish_reason: finishReason }],
+        };
+        res.write(`data: ${JSON.stringify(payload)}\n\n`);
+      };
+
+      // First chunk must carry role so Cursor recognises the stream
+      writeChunk({ role: "assistant", content: "" });
 
       const reader = ollamaResponse.body.getReader();
       const decoder = new TextDecoder("utf-8");
@@ -382,23 +421,35 @@ app.post("/v1/chat/completions", authIfNeeded, async (req, res) => {
           buffer = buffer.slice(newlineIndex + 1);
 
           if (line) {
-            const chunk = JSON.parse(line);
-            const token = chunk.message?.content || "";
-            const finish = chunk.done === true;
-            const payload = {
-              id: `chatcmpl-local-${Date.now()}`,
-              object: "chat.completion.chunk",
-              created: Math.floor(Date.now() / 1000),
-              model: model || DEFAULT_MODEL,
-              choices: [
-                {
-                  index: 0,
-                  delta: token ? { content: token } : {},
-                  finish_reason: finish ? "stop" : null,
-                },
-              ],
-            };
-            res.write(`data: ${JSON.stringify(payload)}\n\n`);
+            try {
+              const chunk = JSON.parse(line);
+              const token = chunk.message?.content || "";
+              const ollamaToolCalls = chunk.message?.tool_calls;
+
+              if (chunk.done === true) {
+                if (Array.isArray(ollamaToolCalls) && ollamaToolCalls.length > 0) {
+                  // Convert Ollama tool_calls → OpenAI format and send in one delta
+                  const toolCalls = ollamaToolCalls.map((tc, idx) => ({
+                    index: idx,
+                    id: `call_${completionId}_${idx}`,
+                    type: "function",
+                    function: {
+                      name: tc.function?.name || "",
+                      arguments:
+                        typeof tc.function?.arguments === "object"
+                          ? JSON.stringify(tc.function.arguments)
+                          : (tc.function?.arguments || "{}"),
+                    },
+                  }));
+                  writeChunk({ tool_calls: toolCalls });
+                  writeChunk({}, "tool_calls");
+                } else {
+                  writeChunk({}, "stop");
+                }
+              } else if (token) {
+                writeChunk({ content: token });
+              }
+            } catch { /* skip malformed lines */ }
           }
 
           newlineIndex = buffer.indexOf("\n");
@@ -411,11 +462,41 @@ app.post("/v1/chat/completions", authIfNeeded, async (req, res) => {
 
     const json = await ollamaResponse.json();
     const content = json.message?.content || "";
+    const ollamaToolCalls = json.message?.tool_calls;
+
+    if (Array.isArray(ollamaToolCalls) && ollamaToolCalls.length > 0) {
+      const toolCalls = ollamaToolCalls.map((tc, idx) => ({
+        id: `call_${Date.now()}_${idx}`,
+        type: "function",
+        function: {
+          name: tc.function?.name || "",
+          arguments:
+            typeof tc.function?.arguments === "object"
+              ? JSON.stringify(tc.function.arguments)
+              : (tc.function?.arguments || "{}"),
+        },
+      }));
+      return res.json({
+        id: `chatcmpl-local-${Date.now()}`,
+        object: "chat.completion",
+        created: Math.floor(Date.now() / 1000),
+        model: resolvedModel,
+        choices: [
+          {
+            index: 0,
+            message: { role: "assistant", content: null, tool_calls: toolCalls },
+            finish_reason: "tool_calls",
+          },
+        ],
+        usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+      });
+    }
+
     return res.json({
       id: `chatcmpl-local-${Date.now()}`,
       object: "chat.completion",
       created: Math.floor(Date.now() / 1000),
-      model: model || DEFAULT_MODEL,
+      model: resolvedModel,
       choices: [{ index: 0, message: { role: "assistant", content }, finish_reason: "stop" }],
       usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
     });
