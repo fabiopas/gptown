@@ -418,7 +418,15 @@ app.post("/v1/chat/completions", authIfNeeded, async (req, res) => {
 /* ── Obsidian one-shot endpoint ───────────────────────────── */
 async function handleObsidianRequest(req, res) {
   try {
-    const { model, prompt, noteContent = "", messages, stream = false } = req.body || {};
+    const {
+      model,
+      prompt,
+      noteContent = "",
+      selectedText = "",
+      mode = "auto",
+      messages,
+      stream = false,
+    } = req.body || {};
 
     let userMessages = [];
     if (Array.isArray(messages) && messages.length > 0) {
@@ -430,11 +438,35 @@ async function handleObsidianRequest(req, res) {
     }
 
     const template = db.getPromptTemplateById("obsidian");
-    const templateText = template?.system_text || "";
+    const templateText = template?.system_text || "You are an Obsidian writing assistant.";
     const noteContext = String(noteContent || "").trim();
-    const systemContent = noteContext
-      ? `${templateText}\n\nCurrent note content:\n---\n${noteContext}\n---`
-      : templateText;
+    const selectedContext = String(selectedText || "").trim();
+    const hasSelection = selectedContext.length > 0;
+    const effectiveMode = mode === "auto" ? (hasSelection ? "selection" : "note_replace") : mode;
+
+    const modeInstructionByType = {
+      selection:
+        "Task type: selection edit. Return only the edited replacement text for the selected fragment. No explanations, no markdown fences.",
+      note_replace:
+        "Task type: full note rewrite. Return only the final full note content. No explanations, no markdown fences.",
+      beautify:
+        "Task type: beautify full note. Improve style, clarity, structure, and readability. Return only the final full note content.",
+      summarize:
+        "Task type: summarize full note. Return a concise structured summary in markdown.",
+      fix:
+        "Task type: correction. Fix grammar, spelling, and clarity while preserving meaning. Return only corrected content.",
+    };
+    const modeInstruction =
+      modeInstructionByType[effectiveMode] || modeInstructionByType.note_replace;
+
+    const systemParts = [templateText, modeInstruction];
+    if (noteContext) {
+      systemParts.push(`Current note content:\n---\n${noteContext}\n---`);
+    }
+    if (hasSelection) {
+      systemParts.push(`Current selected text:\n---\n${selectedContext}\n---`);
+    }
+    const systemContent = systemParts.join("\n\n");
 
     const ollamaResponse = await callOllamaChat({
       model,
@@ -506,6 +538,7 @@ async function handleObsidianRequest(req, res) {
 }
 
 app.post("/v1/obisidan", authIfNeeded, handleObsidianRequest);
+app.post("/v1/obsidian", authIfNeeded, handleObsidianRequest);
 
 /* ── SPA fallback ─────────────────────────────────────────── */
 app.get("*", (req, res, next) => {
