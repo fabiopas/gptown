@@ -98,6 +98,16 @@ var LocalLLMPlugin = class extends import_obsidian.Plugin {
     return hasSelection ? "selection" : "note_replace";
   }
   async applyReply(editor, reply, mode) {
+    if (mode === "tikz_figure") {
+      const cursor = editor.getCursor();
+      const tikzBlock = `
+\\begin{tikzpicture}
+${reply.trim()}
+\\end{tikzpicture}
+`;
+      await this.typewriterInsert(editor, tikzBlock, cursor);
+      return;
+    }
     if (mode === "selection") {
       const from = editor.getCursor("from");
       const to = editor.getCursor("to");
@@ -150,14 +160,17 @@ var LLMInputModal = class extends import_obsidian.Modal {
   }
   onOpen() {
     const { contentEl } = this;
-    contentEl.createEl("h2", { text: "Lokales LLM befragen" });
+    contentEl.empty();
+    contentEl.style.padding = "6px 2px";
+    const titleEl = contentEl.createEl("h2", { text: "GPTown for Obsidian" });
+    titleEl.style.marginBottom = "4px";
     const hintEl = contentEl.createEl("p", {
-      text: "\u{1F4A1} Der aktuelle Inhalt dieser Notiz wird automatisch als Kontext mitgesendet.",
+      text: "Nutze Prompt + Aktionen. Mit Markierung wird nur der selektierte Bereich ersetzt, sonst die gesamte Note.",
       cls: "modal-hint"
     });
-    hintEl.style.fontSize = "0.85em";
+    hintEl.style.fontSize = "0.9em";
     hintEl.style.color = "var(--text-muted)";
-    hintEl.style.marginBottom = "10px";
+    hintEl.style.marginBottom = "14px";
     const textArea = contentEl.createEl("textarea", {
       attr: {
         rows: "6",
@@ -165,19 +178,37 @@ var LLMInputModal = class extends import_obsidian.Modal {
       }
     });
     textArea.style.width = "100%";
-    textArea.style.marginBottom = "15px";
+    textArea.style.marginBottom = "12px";
+    textArea.style.borderRadius = "10px";
+    textArea.style.padding = "10px";
+    textArea.style.border = "1px solid var(--background-modifier-border)";
     textArea.style.resize = "vertical";
+    const quickTitle = contentEl.createEl("div", { text: "Schnellaktionen" });
+    quickTitle.style.fontSize = "0.82em";
+    quickTitle.style.fontWeight = "600";
+    quickTitle.style.color = "var(--text-muted)";
+    quickTitle.style.marginBottom = "8px";
     const quickRow = contentEl.createEl("div");
     quickRow.style.display = "flex";
     quickRow.style.gap = "8px";
     quickRow.style.flexWrap = "wrap";
-    quickRow.style.marginBottom = "12px";
+    quickRow.style.marginBottom = "14px";
     this.createQuickButton(quickRow, "Note versch\xF6nern", "beautify", "Verbessere die gesamte Notiz sprachlich und strukturell.");
     this.createQuickButton(quickRow, "Zusammenfassen", "summarize", "Fasse die gesamte Notiz kompakt zusammen.");
     this.createQuickButton(quickRow, "Korrigieren", "fix", "Korrigiere Rechtschreibung und Grammatik.");
+    this.createQuickButton(
+      quickRow,
+      "TikZ Figure",
+      "tikz_figure",
+      "Erstelle eine passende TikZ-Figur basierend auf dem Kontext und der Anfrage."
+    );
     const submitBtn = contentEl.createEl("button", { text: "Absenden" });
+    submitBtn.style.width = "100%";
+    submitBtn.style.padding = "10px 12px";
+    submitBtn.style.borderRadius = "10px";
     submitBtn.style.backgroundColor = "var(--interactive-accent)";
     submitBtn.style.color = "var(--text-on-accent)";
+    submitBtn.style.fontWeight = "600";
     submitBtn.addEventListener("click", () => {
       const text = textArea.value.trim();
       if (text.length > 0) {
@@ -191,6 +222,9 @@ var LLMInputModal = class extends import_obsidian.Modal {
   createQuickButton(container, label, mode, promptTemplate) {
     const button = container.createEl("button", { text: label });
     button.style.padding = "6px 10px";
+    button.style.borderRadius = "999px";
+    button.style.border = "1px solid var(--background-modifier-border)";
+    button.style.backgroundColor = "var(--background-secondary)";
     button.addEventListener("click", () => {
       this.onSubmit(promptTemplate, mode);
       this.close();

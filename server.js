@@ -431,6 +431,36 @@ async function handleObsidianRequest(req, res) {
         "Task type: summarize full note. Return a concise structured summary in markdown.",
       fix:
         "Task type: correction. Fix grammar, spelling, and clarity while preserving meaning. Return only corrected content.",
+      tikz_figure:
+        "Task type: tikz figure. Generate a TikZ figure based on the user prompt and note context. Return only valid LaTeX TikZ snippet ready to paste at cursor position. No explanations and no markdown code fences.
+        
+        Good example:
+        ```tikz
+    \begin{document}
+    \begin{tikzpicture}[xscale=1.5, yscale=6]
+        % Draw the Axes
+        \draw[->, thick] (-3.5,0) -- (3.5,0) node[right] {$x$};
+        \draw[->, thick] (0,-0.2) -- (0,1.3) node[above] {$F(x)$};
+
+        % Draw the Asymptotes (0 and 1)
+        \draw[dashed, gray] (-3.5,1) -- (3.5,1);
+        
+        % Labels on the Y-axis
+        \node[left] at (0,1) {$1$};
+        \node[below right] at (0,0) {$0$};
+
+        % Draw the CDF Curve (using a logistic curve to approximate an S-shape CDF)
+
+        % Annotations
+        \node[red, right] at (0.5, 0.4) {Accumulating Probability};
+        \draw[->, red, shorten >=2pt, thick] (0.5, 0.45) -- (1.5, 0.85);
+
+        \node[darkgray] at (-2, 0.15) {Starts at 0};
+        \node[darkgray] at (2, 1.15) {Caps at 1};
+
+    \end{tikzpicture}
+    \end{document}
+  ```",
     };
     const modeInstruction =
       modeInstructionByType[effectiveMode] || modeInstructionByType.note_replace;
