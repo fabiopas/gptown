@@ -337,6 +337,7 @@ function showEmptyState() {
 function createThinkingBlock(thinking = "") {
   const panel = document.createElement("details");
   panel.className = "thinking-panel";
+  panel.setAttribute("open", "open");
 
   const summary = document.createElement("summary");
   summary.className = "thinking-summary";

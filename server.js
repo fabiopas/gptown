@@ -17,6 +17,28 @@ const API_KEY = process.env.API_KEY || "local-dev-key";
 const UI_USER = (process.env.UI_USER || "admin").trim();
 const UI_PASSWORD = (process.env.UI_PASSWORD || "changeme").trim();
 
+function logRouteError(route, error) {
+  const message = error instanceof Error ? error.message : String(error);
+  const stack = error instanceof Error ? error.stack : "";
+  const cause = error instanceof Error ? error.cause : undefined;
+  let causeDetails = "";
+  if (cause && typeof cause === "object") {
+    const code = cause.code ? ` code=${cause.code}` : "";
+    const errno = cause.errno ? ` errno=${cause.errno}` : "";
+    const syscall = cause.syscall ? ` syscall=${cause.syscall}` : "";
+    const address = cause.address ? ` address=${cause.address}` : "";
+    const port = cause.port ? ` port=${cause.port}` : "";
+    const causeMessage = cause.message ? ` message=${cause.message}` : "";
+    causeDetails = `${code}${errno}${syscall}${address}${port}${causeMessage}`.trim();
+  } else if (cause !== undefined) {
+    causeDetails = String(cause);
+  }
+  console.error(`[${route}] ${message}${causeDetails ? ` | cause: ${causeDetails}` : ""}`);
+  if (stack) {
+    console.error(stack);
+  }
+}
+
 /* ── Session store: token → { userId, username, isAdmin } ─── */
 const sessions = new Map();
 
@@ -250,6 +272,7 @@ app.post("/api/chat", requireSession, async (req, res) => {
     db.addMessage(conversation_id, "assistant", reply);
     return res.json({ reply });
   } catch (error) {
+    logRouteError("POST /api/chat", error);
     if (!res.headersSent) {
       return res.status(500).json({ error: error.message });
     }
@@ -387,6 +410,7 @@ app.post("/v1/chat/completions", authIfNeeded, async (req, res) => {
       usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
     });
   } catch (error) {
+    logRouteError("POST /v1/chat/completions", error);
     return res.status(500).json({ error: { message: error.message } });
   }
 });
@@ -476,6 +500,7 @@ async function handleObsidianRequest(req, res) {
       usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
     });
   } catch (error) {
+    logRouteError("POST /v1/obisidan", error);
     return res.status(500).json({ error: { message: error.message } });
   }
 }

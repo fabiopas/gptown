@@ -10,6 +10,6 @@ COPY . .
 RUN npm run build:web
 
 ENV NODE_ENV=production
-EXPOSE 3000
+EXPOSE 4200
 
 CMD ["npm", "start"]
